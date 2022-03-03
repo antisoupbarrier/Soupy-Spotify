@@ -5,10 +5,14 @@ import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 import os.path
 import json
+import os
+from dotenv import load_dotenv
+
+load_dotenv('local.env')
 
 scope = "user-follow-read user-top-read playlist-modify-private"
 client_id = "12c6e5ab3601483db07e0247b5888d02"
-client_secret = "4afea61c3e814e209dc96d29976d77c1"
+client_secret = os.environ['CLIENT_SECRET']
 sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=scope, client_id=client_id, client_secret = client_secret,redirect_uri="http://localhost:1084"))
 
 uri=None
