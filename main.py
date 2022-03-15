@@ -2,6 +2,7 @@ from calendar import week
 from datetime import timedelta
 from datetime import date
 from datetime import datetime
+import datetime as dt
 from ftplib import all_errors
 from sys import breakpointhook
 from xml.dom.minidom import AttributeList
@@ -15,7 +16,7 @@ from dotenv import load_dotenv
 
 load_dotenv('local.env')
 
-scope = "user-follow-read, user-top-read, playlist-modify-private"
+scope = "user-follow-read, user-top-read, playlist-modify-private, playlist-read-private, playlist-read-collaborative"
 client_id = "12c6e5ab3601483db07e0247b5888d02"
 client_secret = os.environ['CLIENT_SECRET']
 sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=scope, client_id=client_id, client_secret = client_secret,redirect_uri="http://localhost:1084"))
@@ -26,7 +27,7 @@ def get_date(artist_albums):
     return artist_albums['release_date']
 
 
-def get_artist_albums(uri): #uses artist uri to collect all artist albums/singles released
+def get_artist_albums(uri): #obsoleted by no_repeats
     i = 0
     all_artist_albums = []
     got_all_artist_albums = False
@@ -41,6 +42,26 @@ def get_artist_albums(uri): #uses artist uri to collect all artist albums/single
     return all_artist_albums
 
 
+def get_artist_albums_no_repeats(uri): #uses artist uri to collect all artist albums/singles released
+    i = 0
+    all_artist_albums = []
+    album_names = []
+    got_all_artist_albums = False
+    while not got_all_artist_albums:
+        artist_albums = sp.artist_albums(uri, album_type="single,album", country='US', limit=20, offset=(i*20))
+        if artist_albums['items']:
+            i += 1
+            for album in artist_albums['items']:
+                if album['name'] not in album_names:
+                    album_names.append(album['name'])
+                    all_artist_albums.append(album)
+                else:
+                    continue
+        else:
+            got_all_artist_albums = True
+    return all_artist_albums 
+
+
 def get_all_artists_albums(num_artists): #generates list of all followed artist uris to provide artist uri for album/single api requests
     all_albums = []
     loops = -1
@@ -48,7 +69,6 @@ def get_all_artists_albums(num_artists): #generates list of all followed artist 
         loops = ceil(num_artists / 50)
     if loops == 0:
         return all_albums
-
     got_all_artists = False
     uri = None
     i = 0
@@ -66,11 +86,58 @@ def get_all_artists_albums(num_artists): #generates list of all followed artist 
     return all_albums
 
 
+def get_all_artists_albums_no_repeats(num_artists): #generates list of all followed artist uris to provide artist uri for album/single api requests
+    all_albums = []
+    loops = -1
+    if num_artists != -1:
+        loops = ceil(num_artists / 50)
+    if loops == 0:
+        return all_albums
+    got_all_artists = False
+    uri = None
+    i = 0
+    while (not got_all_artists) and ((loops == -1) or (i < loops)): #parameter loops to limit api requests in batches of 50, set i ~ ((i == -1) or~
+        i += 1
+        results = sp.current_user_followed_artists(limit=50, after=uri)
+        if not results['artists']['items']:
+            got_all_artists = True
+        for idx, item in enumerate(results['artists']['items']):
+            #print("processing an artist")
+            uri = item['uri'][15:]
+            all_artist_albums = get_artist_albums_no_repeats(uri)
+            for album in all_artist_albums:
+                all_albums.append(album)
+    return all_albums
+
+
+def get_all_tracks(num_tracks): #generates list of all followed artist uris to provide artist uri for album/single api requests
+    all_tracks = []
+    loops = -1
+    if num_tracks != -1:
+        loops = ceil(num_tracks / 50)
+    if loops == 0:
+        return all_tracks
+    got_all_tracks = False
+    i = 0
+    #x=0
+    while (not got_all_tracks) and ((loops == -1) or (i < loops)): #parameter loops to limit api requests in batches of 50, set i ~ ((i == -1) or~
+        tracks = sp.current_user_saved_tracks(limit=50, offset=(i*50))
+        i += 1
+        if not tracks:
+            got_all_tracks = True
+        for track in tracks['items']:
+            print(track['track']['name'])
+            #x += 1
+            all_tracks.append(track)
+            #print(all_tracks)
+    #print(x)
+    return all_tracks
+
 def fetch_album_cache(num_artists):
     file_exists = os.path.exists('album_cache.json')
     if file_exists == False:
         f = open("album_cache.json", "w")
-        all_albums = get_all_artists_albums(num_artists)
+        all_albums = get_all_artists_albums_no_repeats(num_artists)
         dictionary = {
             "all_albums" : all_albums,
         }
@@ -81,6 +148,23 @@ def fetch_album_cache(num_artists):
         dictionary = json.load(f)
         all_albums = dictionary["all_albums"]
         return all_albums
+
+
+def fetch_tracks_cache(num_tracks):
+    file_exists = os.path.exists('track_cache.json')
+    if file_exists == False:
+        f = open("track_cache.json", "w")
+        all_tracks = get_all_tracks(num_tracks)
+        dictionary = {
+            "all_tracks" : all_tracks,
+        }
+        f.write(json.dumps(dictionary))
+        return all_tracks
+    else:
+        f = open('track_cache.json', "r")
+        dictionary = json.load(f)
+        all_tracks = dictionary["all_tracks"]
+        return all_tracks
 
 
 def recent_album_releases(num_artists): #input -1 for all artists
@@ -197,8 +281,75 @@ def generate_weekly_playlist():
         sp.playlist_add_items(new_playlist['id'], track_uris[100*i:100*(i+1)], position=None)
 
 
-all_albums = recent_album_releases(-1)
-print_top_albums(all_albums, 500)
+def get_artist_uris_from_track(all_tracks):
+    artist_uris = []
+    for track in all_tracks:
+        #print(track)
+        for artist in track['track']['album']:
+            artist_uris.append(artist['id'])    
+    return artist_uris
+
+def get_playlist_id(playlist_name):
+    x=0
+    #user_playlists = []
+    got_all_playlists = False
+    #playlist_names = []
+    while not got_all_playlists:
+        user_playlists = sp.current_user_playlists(limit=50, offset=x)
+        x+=50
+        if not user_playlists['items']:
+            got_all_playlists = True
+        else:
+            for playlist in user_playlists['items']:
+                if playlist['name'] == playlist_name:
+                    #print(playlist)
+                    return playlist['id']
+
+
+def get_playlist_track_uris(playlist_id):
+    playlist_track_uris = []
+    playlist_tracks = sp.playlist(playlist_id, fields=None, market='US')
+    for track in playlist_tracks['tracks']['items']:
+        #print(track)
+        playlist_track_uris.append(track['track']['id'])
+    return playlist_track_uris
+
+
+def get_monday_date(d=date.today()): 
+    #print(dt.timedelta(days=d.weekday()))
+    monday = d - dt.timedelta(days=d.weekday()) 
+    return monday
+
+def create_discover_weekly_backup():
+    playlist_id = get_playlist_id("Discover Weekly")
+    playlist_track_uris = get_playlist_track_uris(playlist_id)
+    monday = get_monday_date()
+    playlist_name = f'DW {monday}'
+    user_id = sp.me()['id']
+    new_playlist = sp.user_playlist_create(user_id, playlist_name, public=False, collaborative=False, description= f'Discover Weekly backup for {monday} release.')
+    all_items_on_playlist = int(len(playlist_track_uris) / 100) + ((len(playlist_track_uris) % 100) > 0)
+    for i in range(0, all_items_on_playlist):
+        sp.playlist_add_items(new_playlist['id'], playlist_track_uris[100*i:100*(i+1)], position=None)
+
+
+create_discover_weekly_backup()
+
+
+# playlist_id = get_playlist_id("Discover Weekly")
+    #print(playlist_id)
+#playlist_track_uris = get_playlist_track_uris(playlist_id)
+    #playlist_tracks = sp.playlist(playlist_id, fields=None, market='US')
+#print(playlist_track_uris)
+    # playlist_track_uris = get_playlist_track_uris(playlist_id)
+    # print(playlist_track_uris)
+
+# all_tracks = fetch_tracks_cache(100)
+# artist_uris = get_artist_uris_from_track(all_tracks)
+# print(artist_uris)
+
+
+#all_albums = recent_album_releases(-1)
+#print_top_albums(all_albums, 500)
 #generate_weekly_playlist()
 
 #all_albums = recent_album_releases(-1)
