@@ -1,0 +1,2 @@
+import rsbpi_automator
+rsbpi_automator.generate_weekly_playlist()
