@@ -1,3 +1,8 @@
 local.env
 album_cache.json
-album_cache1.json
+track_cache.json
+followed_artist_cache.json
+sql.py
+.cache
+rsbpi/features
+**/__pycache__
