@@ -56,7 +56,8 @@ def get_artist_albums_no_repeats(uri): #uses artist uri to collect all artist al
                         continue
             else:
                 got_all_artist_albums = True
-        except:
+        except Exception as e:
+            print(e)
             print("Retrying artist albums...")
     return all_artist_albums 
 
