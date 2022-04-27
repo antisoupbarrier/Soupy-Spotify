@@ -1,2 +1,2 @@
-import rsbpi_automator
-rsbpi_automator.create_discover_weekly_backup()
+import main
+main.create_discover_weekly_backup()
