@@ -1,4 +1,5 @@
 # soupyspotify
+Built on python 3.9.7
 
 # Description
 Spotify's weekly release radar playlist is commonly inaccurate, including older releases and omitting new releases by lesser known followed artists. 
