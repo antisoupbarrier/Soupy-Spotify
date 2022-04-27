@@ -1,14 +1,13 @@
 from datetime import timedelta # Recent Release, DW
 from datetime import date #Recent Release, DW
-
 from datetime import datetime #Recent Release
 from math import ceil #Recent Release
-
 import time
 
 from ftplib import all_errors
 from sys import breakpointhook
 from xml.dom.minidom import AttributeList
+from requests.exceptions import ReadTimeout
 import json
 
 #########################################################################
@@ -26,7 +25,7 @@ load_dotenv('local.env')
 scope = "user-follow-read, user-top-read, playlist-modify-private, playlist-read-private, playlist-read-collaborative"
 client_id = "44d67a7e446a4f6686640f0cbfc5b11b" #enter spotify developer portal api info here
 client_secret = os.environ['CLIENT_SECRET']
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=scope, client_id=client_id, client_secret = client_secret,redirect_uri="http://localhost:1084"))
+sp = spotipy.Spotify(auth_manager=SpotifyOAuth(scope=scope, client_id=client_id, client_secret = client_secret,redirect_uri="http://localhost:1084"), requests_timeout=10, retries=10)
 
 ##################################################################################
 #    Recent Releases by followed artists playlist generation
@@ -64,7 +63,7 @@ def get_artist_albums_no_repeats(uri): #uses artist uri to collect all artist al
 
 def get_all_artists_albums_no_repeats(num_artists): #generates list of all followed artist uris to provide artist uri for album/single api requests
     all_albums = []
-    loops = -1 ###loops of 50 currently broken missing import???
+    loops = -1 
     if num_artists != -1:
         loops = ceil(num_artists / 50)
     if loops == 0:
@@ -72,26 +71,48 @@ def get_all_artists_albums_no_repeats(num_artists): #generates list of all follo
     got_all_artists = False
     uri = None
     i = 0
-    while (not got_all_artists) and ((loops == -1) or (i < loops)): #parameter loops to limit api requests in batches of 50, set i ~ ((i == -1) or~
+    while (not got_all_artists) and ((loops == -1) or (i < loops)):
         i += 1
         results = None
         try:
-            results = sp.current_user_followed_artists(limit=50, after=uri) 
-        except Exception as e:
-            print(e)
+            results = sp.current_user_followed_artists(limit=50, after=uri)
+            #print(results)
+        except ReadTimeout:
+            print('Spotify timed out... Trying again..')
+            results = sp.current_user_followed_artists(limit=50, after=uri)
         if results:
             if not results['artists']['items']:
                 got_all_artists = True
-            for idx, item in enumerate(results['artists']['items']):
+            for idx, item in enumerate(results['artists']['items']): #
                 uri = item['id']
                 all_artist_albums = get_artist_albums_no_repeats(uri)
                 for album in all_artist_albums:
-                    all_albums.append(album)   
+                    all_albums.append(album)
     return all_albums
 
 
+def fetch_album_cache(num_artists): ### use this cache for testing if necessary. modify recent album releases as necessary
+    file_exists = os.path.exists('album_cache.json')
+    if file_exists == False:
+        f = open("album_cache.json", "w")
+        all_albums = get_all_artists_albums_no_repeats(num_artists)
+        dictionary = {
+            "all_albums" : all_albums,
+        }
+        f.write(json.dumps(dictionary))
+        return all_albums
+    else:
+        f = open('album_cache.json', "r")
+        try:
+            dictionary = json.load(f)
+        except Exception as e:
+            print(e)
+        all_albums = dictionary["all_albums"]
+        return all_albums
+
 def recent_album_releases(num_artists): #input -1 for all artists
-    all_albums = get_all_artists_albums_no_repeats(num_artists)#fetch_album_cache(num_artists) #input -1 for all artists
+    all_albums = get_all_artists_albums_no_repeats(num_artists)
+    #all albums = fetch_album_cache(num_artists) ### enables track caching for testing purposes
     all_albums.sort(key=get_date, reverse=True)
     return all_albums
 
@@ -99,7 +120,7 @@ def recent_album_releases(num_artists): #input -1 for all artists
 def album_uri_check(album_uris, album):
     for uri in album_uris:# skips if album uri already exists
             if album["uri"] == uri: 
-                return True
+                return True 
 
 
 def get_album_track_uri(album): #using album uri, makes an api call for all tracks on album and returns track uris
@@ -135,9 +156,9 @@ def recent_release_track_uri(all_albums, num_days, count_limit):# num_days limit
     x = 0 #print counter set to 0
     duplicate_uri = 0 #counter
     for idx, album in enumerate(all_albums):  # these lines create a table of artist names
-        #artist_names = []
         skip = False
         skip = album_uri_check(album_uris, album)
+        #artist_names = [] ## unhash these lines to enable artist name parsing for print below
         #for artist in album["artists"]: 
         #    artist_names.append(artist['name'])
         if skip:
@@ -158,10 +179,12 @@ def recent_release_track_uri(all_albums, num_days, count_limit):# num_days limit
 
 
 def generate_weekly_playlist():
-    all_albums = recent_album_releases(-1) #count not working
-    track_uris = recent_release_track_uri(all_albums, 6, 300)
+    num_artists = -1 #-1 for all, artists requested in batches of 50 (limit this while testing)
+    num_days = 6
+    all_albums = recent_album_releases(num_artists) 
+    track_uris = recent_release_track_uri(all_albums, num_days, 300)
     now = datetime.now()
-    date_time = now.strftime("%Y/%m/%d")
+    date_time = now.strftime("%Y-%m-%d")
     user_id_resp = sp.me()
     user_id = user_id_resp['id']
     new_playlist = sp.user_playlist_create(user_id, "RW " + date_time, public=False, collaborative=False, description='New music for the week ending on ' + date_time)
@@ -169,30 +192,6 @@ def generate_weekly_playlist():
     for i in range(0, all_items_on_playlist):
         sp.playlist_add_items(new_playlist['id'], track_uris[100*i:100*(i+1)], position=None)
 
-
-###
-
-def fetch_album_cache(num_artists):
-    file_exists = os.path.exists('album_cache.json')
-    if file_exists == False:
-        f = open("album_cache.json", "w")
-        all_albums = get_all_artists_albums_no_repeats(num_artists)
-        dictionary = {
-            "all_albums" : all_albums,
-        }
-        f.write(json.dumps(dictionary))
-        return all_albums
-    else:
-        f = open('album_cache.json', "r")
-        try:
-            dictionary = json.load(f)
-        except Exception as e:
-            print(e)
-        all_albums = dictionary["all_albums"]
-        return all_albums
-
-
-###
 
 ####################################################################
 #   Discover Weekly Backup, Can be used for Daily Mix backups??
